@@ -1,0 +1,4 @@
+# Vercel function deps only — the dashboard reads Turso; ingestion/forecast
+# (pandas/statsmodels/openpyxl) run locally via the CLI, never on Vercel.
+fastapi>=0.115
+libsql>=0.1

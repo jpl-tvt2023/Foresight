@@ -261,7 +261,13 @@ CREATE TABLE IF NOT EXISTS meta (
 def connect(db_path=None):
     if TURSO_URL and db_path is None:
         import libsql  # requires a platform wheel; on Vercel (linux/cp312) it exists
-        raw = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+        try:
+            raw = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+        except Exception:
+            # driver builds that lack remote-only connections: embedded replica in /tmp
+            raw = libsql.connect("/tmp/foresight-replica.db",
+                                 sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+            raw.sync()
         return _TursoConnection(raw)
     conn = sqlite3.connect(str(db_path or DB_PATH))
     conn.row_factory = sqlite3.Row

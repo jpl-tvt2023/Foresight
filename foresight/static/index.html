@@ -768,6 +768,7 @@ const RESULT_LABELS = {
   through: "reconstructed through", forecast_cells: "forecast cells",
   run_date: "alerts run date", stockout_alerts: "stockout alerts",
   overstock_alerts: "overstock alerts", dead_stock_states: "dead-stock states",
+  synced_to_turso: "rows synced to the remote dashboard",
 };
 function setBanner(kind, title, msg) {
   const b = $("#upBanner");
@@ -798,7 +799,13 @@ $("#upBtn").addEventListener("click", async () => {
       const parts = Object.entries(j)
         .filter(([k, v]) => RESULT_LABELS[k] && v !== null && v !== "")
         .map(([k, v]) => `${typeof v === "number" ? fmt(v) : v} ${RESULT_LABELS[k]}`);
-      setBanner("ok", "Upload successful", parts.join(" · ") + ". Dashboard refreshed with the new data.");
+      if (j.sync_warning) {
+        setBanner("warn", "Ingested — but remote sync failed",
+          parts.join(" · ") + ". " + j.sync_warning +
+          " — the local dashboard is current; run `python -m foresight sync-turso` to update the remote one.");
+      } else {
+        setBanner("ok", "Upload successful", parts.join(" · ") + ". Dashboard refreshed with the new data.");
+      }
       refreshAll();
     }
   } catch (e) {

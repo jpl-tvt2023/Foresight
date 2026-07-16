@@ -78,6 +78,60 @@ class _TursoConnection:
     def close(self):
         self._raw.close()
 
+
+class _ClientResult:
+    """Cursor-ish view over a libsql_client ResultSet."""
+
+    def __init__(self, rs):
+        self._rs = rs
+        self._cols = {name: i for i, name in enumerate(rs.columns or ())}
+        self._pos = 0
+
+    def fetchone(self):
+        if self._pos >= len(self._rs.rows):
+            return None
+        row = self._rs.rows[self._pos]
+        self._pos += 1
+        return _Row(self._cols, tuple(row))
+
+    def fetchall(self):
+        rows = [_Row(self._cols, tuple(r)) for r in self._rs.rows[self._pos:]]
+        self._pos = len(self._rs.rows)
+        return rows
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+    @property
+    def rowcount(self):
+        return self._rs.rows_affected
+
+    @property
+    def lastrowid(self):
+        return self._rs.last_insert_rowid
+
+
+class _ClientConnection:
+    """Adapter over libsql_client's sync client (pure Python — no wheel needed).
+    Statements auto-commit remotely; commit() is a no-op."""
+
+    def __init__(self, client):
+        self._client = client
+
+    def execute(self, sql, params=()):
+        return _ClientResult(self._client.execute(sql, list(params)))
+
+    def executemany(self, sql, seq):
+        import libsql_client
+        self._client.batch([libsql_client.Statement(sql, list(p)) for p in seq])
+        return None
+
+    def commit(self):
+        pass
+
+    def close(self):
+        self._client.close()
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 
@@ -259,20 +313,41 @@ CREATE TABLE IF NOT EXISTS meta (
 
 
 def connect(db_path=None):
-    if TURSO_URL and db_path is None:
-        import libsql  # requires a platform wheel; on Vercel (linux/cp312) it exists
-        try:
-            raw = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
-        except Exception:
-            # driver builds that lack remote-only connections: embedded replica in /tmp
-            raw = libsql.connect("/tmp/foresight-replica.db",
-                                 sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-            raw.sync()
-        return _TursoConnection(raw)
+    # Serve from Turso in deployed/read-only contexts (Vercel sets VERCEL=1).
+    # Locally the pipeline always runs on the sqlite file even when .env
+    # carries Turso credentials for the post-ingest sync.
+    deployed = os.environ.get("VERCEL") or os.environ.get("FORESIGHT_READONLY") == "1"
+    if TURSO_URL and db_path is None and deployed:
+        return turso_connect(TURSO_URL, TURSO_TOKEN)
     conn = sqlite3.connect(str(db_path or DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def turso_connect(url: str | None = None, token: str | None = None):
+    """Explicit remote handle (used by the dashboard on Vercel and by sync-turso).
+
+    Prefers the native `libsql` driver (has wheels on Vercel's linux runtime);
+    falls back to the pure-Python `libsql-client` where no wheel exists
+    (e.g. Windows / Python 3.14 dev machines).
+    """
+    url, token = url or TURSO_URL, token or TURSO_TOKEN
+    if not url:
+        raise RuntimeError("FORESIGHT_TURSO_URL is not set")
+    try:
+        import libsql
+        try:
+            raw = libsql.connect(url, auth_token=token)
+        except Exception:
+            # driver builds without remote-only mode: embedded replica in /tmp
+            raw = libsql.connect("/tmp/foresight-replica.db",
+                                 sync_url=url, auth_token=token)
+            raw.sync()
+        return _TursoConnection(raw)
+    except ImportError:
+        import libsql_client
+        return _ClientConnection(libsql_client.create_client_sync(url, auth_token=token))
 
 
 def init_db(conn) -> None:

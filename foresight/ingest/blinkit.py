@@ -548,6 +548,15 @@ def ingest_daily_sales(conn, path: str | Path) -> dict:
         if "name" in cols and item not in names:
             names[item] = r[cols["name"]]
 
+    # sales_daily upserts are replace-semantics, but ledger inserts are not —
+    # drop this export's prior ledger rows so re-uploading the same file can't
+    # double-count sale deltas in reconstruct_forward.
+    touched = sorted({d for (_, _, _, d) in agg})
+    if touched:
+        conn.execute(
+            "DELETE FROM stock_ledger WHERE note='daily sales export' "
+            f"AND event_date IN ({','.join('?' * len(touched))})", touched)
+
     for (pit, state, city, d), (units, gross) in agg.items():
         iid = db.upsert_item(conn, pid, pit, name=names.get(pit))
         lid = db.upsert_location(conn, pid, state, city)

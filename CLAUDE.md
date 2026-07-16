@@ -54,15 +54,29 @@ re-run the validator. Tabs deep-link via `#hash`.
 ## Deployment
 
 Vercel (read-only dashboard) + Turso (hosted libSQL) — see README "Deploy".
-`api/index.py` is the Vercel entrypoint; `api/requirements.txt` is the slim
-function dep set (root requirements.txt is .vercelignore'd — pandas/statsmodels
-must never ship to Vercel). `db.connect()` returns a `_TursoConnection` adapter
-when `FORESIGHT_TURSO_URL` is set (rows wrapped in-house, no driver row_factory
-dependence). Ingest/forecast always run locally; push the sqlite file with
-`turso db create foresight --from-file foresight.db`. `FORESIGHT_READONLY=1`
-disables `/api/upload` (501). The `libsql` pip package has no cp314 Windows
-wheel — it installs on Vercel (linux/cp312) but not in the local venv; local
-code paths never import it.
+`api/index.py` is the Vercel entrypoint. **Root `requirements.txt` = the slim
+serverless deps** — Vercel's builder only installs from the root file (an
+`api/requirements.txt` is ignored; learned the hard way). The full local stack
+is `requirements-local.txt` (.vercelignore'd so pandas/statsmodels never ship).
+`db.connect()` serves from Turso only when deployed (`VERCEL` env or
+`FORESIGHT_READONLY=1`); locally it always uses the sqlite file even when
+`.env` carries Turso credentials — those are for the post-ingest sync.
+`db.turso_connect()` prefers the native `libsql` driver (no cp314 Windows
+wheel — Vercel only) and falls back to pure-Python `libsql-client` locally.
+Rows are wrapped in-house (`_Row`), no driver row_factory dependence.
+`/api/upload` returns 501 on the deployment; uploads are local-only.
+
+## Daily data flow
+
+Local ingest is canonical: upload via the local dashboard (or `run-all`) →
+pipeline → `sync.prune` (keeps only the newest forecast partition + last 30
+runs — without it the DB grows ~200k rows/day) → `sync.sync_turso` pushes to
+Turso incrementally (never destroy/recreate — that churns URL+token). The sync
+is signature-diff based and convergent: interrupted = just re-run;
+`sync-turso --full` rebuilds the remote. Daily re-uploads are idempotent
+(sales upsert + the daily-export ledger delete in `ingest_daily_sales`).
+Commit identity is repo-local (`jpl-tvt2023` noreply) — Vercel blocks deploys
+from commit authors without linked Vercel accounts.
 
 ## Testing without polluting real data
 

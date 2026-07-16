@@ -126,17 +126,46 @@ vercel env add FORESIGHT_READONLY      # value: 1
 vercel deploy --prod
 ```
 
-Monthly refresh after ingesting a new zip locally:
+Local `.env` (git-ignored, repo root) — same values as the Vercel env, used by
+the post-ingest auto-sync:
 
-```powershell
-.venv\Scripts\python -m foresight run-all C:\path\to\payout_sheet_2026-07.zip
-turso db destroy foresight --yes; turso db create foresight --from-file foresight.db
-# (regenerate the token if destroyed: turso db tokens create foresight, update Vercel env)
+```
+FORESIGHT_TURSO_URL=libsql://foresight-<org>.turso.io
+FORESIGHT_TURSO_TOKEN=<token>
 ```
 
+## Daily / monthly data flow
+
+Blinkit has no public seller API, so exports are downloaded from the seller
+panel by hand; everything after that is automatic:
+
+1. Download the daily sales export (or the monthly payout zip).
+2. Double-click `Foresight.bat` — starts the local dashboard and opens the
+   browser (or `.venv\Scripts\python -m foresight serve --open`).
+3. Upload tab → pick the file → **Ingest**. The pipeline runs locally
+   (ingest → stock reconstruction → 90-day forecast → balancing → prune),
+   then syncs the results to Turso. The banner ends with
+   "rows synced to the remote dashboard" — at that point the Vercel dashboard
+   is fresh. Takes ~5–10 min; the forecast retrain dominates.
+   Re-uploading the same file is safe (idempotent).
+
+If the sync fails (offline, bad token), the banner says so and the local
+dashboard stays current; retry with:
+
+```powershell
+.venv\Scripts\python -m foresight sync-turso        # incremental, convergent
+.venv\Scripts\python -m foresight sync-turso --full # repair/rebuild the remote
+```
+
+The CLI path does the same as the upload tab:
+`python -m foresight run-all <file>` ingests, prunes, and auto-syncs when
+`.env` has the Turso URL.
+
 Layout notes: `api/index.py` is the Vercel entrypoint (exposes the FastAPI
-`app`); `api/requirements.txt` holds the slim serverless deps (fastapi +
-libsql — the root requirements.txt is .vercelignore'd so pandas/statsmodels
-never ship); `foresight/db.py` returns a Turso adapter when
-`FORESIGHT_TURSO_URL` is set, plain sqlite3 otherwise. `/api/upload` returns
-501 when `FORESIGHT_READONLY=1`.
+`app`); the **root `requirements.txt` is the serverless dep set** (fastapi,
+python-multipart, libsql) because Vercel's builder only installs from the
+root file — the full local stack lives in `requirements-local.txt`
+(.vercelignore'd). `foresight/db.py` serves from Turso when deployed
+(`VERCEL` env or `FORESIGHT_READONLY=1`) and from the sqlite file locally;
+`foresight/sync.py` holds the incremental sync. `/api/upload` returns 501 on
+the deployment — uploads are local-only by design.

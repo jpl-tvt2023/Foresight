@@ -3,6 +3,17 @@ import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Load a git-ignored .env (KEY=VALUE lines) so Turso credentials live per-project.
+# Real environment variables always win (setdefault).
+_env_file = PROJECT_ROOT / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"'))
+
 DB_PATH = Path(os.environ.get("FORESIGHT_DB", PROJECT_ROOT / "foresight.db"))
 
 # --- Balancing engine defaults (per spec §10.3: tunable, confirmed later) ---

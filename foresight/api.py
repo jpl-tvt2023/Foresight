@@ -276,6 +276,18 @@ async def upload(file: UploadFile):
                              "VALUES ('backtest', ?, datetime('now'))", (json.dumps(bt),))
                 conn.commit()
             result |= balance.run_balancing(conn)
+            from foresight import sync
+            sync.prune(conn)
+            if os.environ.get("FORESIGHT_TURSO_URL"):
+                try:
+                    remote = db.turso_connect()
+                    try:
+                        stats = sync.sync_turso(conn, remote)
+                    finally:
+                        remote.close()
+                    result |= {"synced_to_turso": sum(stats.values())}
+                except Exception as e:  # ingest succeeded; sync can be retried
+                    result |= {"sync_warning": f"remote sync failed: {e}"}
         return JSONResponse(result)
     except Exception as e:  # surfaced in the upload UI
         return JSONResponse({"error": str(e)}, status_code=400)

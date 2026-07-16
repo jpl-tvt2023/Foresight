@@ -5,9 +5,11 @@ Commands:
   reconstruct                  Build stock snapshots (ageing) + roll ledger forward
   forecast                     Run the 90-day demand forecast
   balance                      Run the balancing engine → recommendations
-  run-all <zip> [...]          ingest → reconstruct → forecast → balance
+  run-all <zip> [...]          ingest → reconstruct → forecast → balance → prune → sync
   purge <cycle-label>          Remove a (partially) ingested cycle, e.g. 2026-03
-  serve [--port 8000]          Start the dashboard API
+  prune                        Drop stale forecast partitions / old balancing runs
+  sync-turso [--full]          Push the local DB's current state to Turso
+  serve [--port 8000] [--open] Start the dashboard API (--open launches the browser)
 """
 import json
 import sys
@@ -40,6 +42,20 @@ def _pipeline(conn, do_ingest=(), do_stock=True, do_forecast=True, do_balance=Tr
             print(json.dumps({"backtest": bt}))
     if do_balance:
         print(json.dumps(balance.run_balancing(conn)))
+        from foresight import sync
+        print(json.dumps(sync.prune(conn)))
+        import os
+        if os.environ.get("FORESIGHT_TURSO_URL"):
+            print(json.dumps({"sync_turso": _sync_turso(conn)}))
+
+
+def _sync_turso(local_conn, full: bool = False) -> dict:
+    from foresight import sync
+    remote = db.turso_connect()
+    try:
+        return sync.sync_turso(local_conn, remote, full=full)
+    finally:
+        remote.close()
 
 
 def main(argv: list[str]) -> int:
@@ -65,8 +81,16 @@ def main(argv: list[str]) -> int:
                 print("usage: purge <cycle-label>")
                 return 1
             print(json.dumps(db.purge_cycle(conn, args[0])))
+        elif cmd == "prune":
+            from foresight import sync
+            print(json.dumps(sync.prune(conn)))
+        elif cmd == "sync-turso":
+            print(json.dumps(_sync_turso(conn, full="--full" in args)))
         elif cmd == "serve":
             port = int(args[args.index("--port") + 1]) if "--port" in args else 8000
+            if "--open" in args:
+                import webbrowser
+                webbrowser.open(f"http://127.0.0.1:{port}/")
             import uvicorn
             from foresight.api import app
             uvicorn.run(app, host="127.0.0.1", port=port)

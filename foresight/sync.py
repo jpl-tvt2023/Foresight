@@ -20,10 +20,11 @@ from __future__ import annotations
 
 from foresight import db
 
-SMALL_TABLES = [
-    "platforms", "items", "locations", "payout_cycles", "payout_summary",
-    "charges", "recommendations", "replenishments", "meta",
-]
+# Parents are referenced by dated tables, and Turso enforces foreign keys —
+# they must be UPSERTed in place, never DELETE-all'd. Leaves have no dependents.
+PARENT_TABLES = ["platforms", "items", "locations", "payout_cycles"]
+LEAF_TABLES = ["payout_summary", "charges", "recommendations", "replenishments", "meta"]
+SMALL_TABLES = PARENT_TABLES + LEAF_TABLES  # kept for tests/stats iteration
 
 # table -> (date column, value column used in the content signature)
 DATED_TABLES = {
@@ -33,27 +34,59 @@ DATED_TABLES = {
     "stock_snapshots": ("as_of_date", "units_on_hand"),
 }
 
-BATCH_ROWS = 80  # rows per multi-row INSERT; keeps bind params well under 999
+BATCH_ROWS = 80        # rows per multi-row INSERT; keeps bind params well under 999
+STMTS_PER_FLUSH = 24   # INSERT statements grouped into one network round trip
 
 
 def _columns(local, table: str) -> list[str]:
     return [r["name"] for r in local.execute(f"PRAGMA table_info({table})")]
 
 
-def _insert_rows(remote, table: str, cols: list[str], rows: list[tuple]) -> int:
+def _flush(remote, stmts: list) -> None:
+    batch = getattr(remote, "execute_batch", None)
+    if batch:
+        batch(stmts)     # one transactional request on the libsql clients
+    else:                # plain dbapi target (tests): statement-at-a-time
+        for sql, params in stmts:
+            remote.execute(sql, params)
+        remote.commit()
+
+
+def _write_rows(remote, table: str, cols: list[str], rows: list[tuple],
+                suffix: str = "") -> int:
+    """Chunk rows into multi-row INSERTs and ship them STMTS_PER_FLUSH per request."""
     if not rows:
         return 0
     col_sql = ", ".join(cols)
     one = "(" + ", ".join("?" for _ in cols) + ")"
+    pending: list = []
     for i in range(0, len(rows), BATCH_ROWS):
         chunk = rows[i:i + BATCH_ROWS]
-        sql = f"INSERT INTO {table} ({col_sql}) VALUES " + ", ".join(one for _ in chunk)
+        sql = (f"INSERT INTO {table} ({col_sql}) VALUES "
+               + ", ".join(one for _ in chunk) + suffix)
         params: list = []
         for r in chunk:
             params.extend(r)
-        remote.execute(sql, params)
+        pending.append((sql, params))
+        if len(pending) >= STMTS_PER_FLUSH:
+            _flush(remote, pending)
+            pending = []
+    if pending:
+        _flush(remote, pending)
     remote.commit()
     return len(rows)
+
+
+def _upsert_rows(remote, table: str, cols: list[str], rows: list[tuple],
+                 key: str = "id") -> int:
+    """FK-safe refresh for parent tables: insert-or-update by primary key."""
+    setters = ", ".join(f"{c}=excluded.{c}" for c in cols if c != key)
+    return _write_rows(remote, table, cols, rows,
+                       suffix=f" ON CONFLICT({key}) DO UPDATE SET {setters}")
+
+
+def _insert_rows(remote, table: str, cols: list[str], rows: list[tuple]) -> int:
+    return _write_rows(remote, table, cols, rows)
 
 
 def _ensure_schema(remote) -> None:
@@ -84,24 +117,36 @@ def sync_turso(local, remote, full: bool = False) -> dict:
     _ensure_schema(remote)
     stats: dict[str, int] = {}
 
-    # children before parents on delete (harmless when remote FKs are off,
-    # correct when they're on); parents before children on insert
-    for table in reversed(SMALL_TABLES):
+    # parents first (upsert by primary key — FK-safe), then rebuild the leaves
+    for table in PARENT_TABLES:
+        cols = _columns(local, table)
+        rows = [tuple(r) for r in local.execute(f"SELECT {', '.join(cols)} FROM {table}")]
+        stats[table] = _upsert_rows(remote, table, cols, rows)
+    for table in reversed(LEAF_TABLES):
         remote.execute(f"DELETE FROM {table}")
     remote.commit()
-    for table in SMALL_TABLES:
+    for table in LEAF_TABLES:
         cols = _columns(local, table)
         rows = [tuple(r) for r in local.execute(f"SELECT {', '.join(cols)} FROM {table}")]
         stats[table] = _insert_rows(remote, table, cols, rows)
 
-    # forecasts: remote mirrors only the newest partition
+    # forecasts: remote mirrors only the newest partition; skip the swap when
+    # the remote already holds exactly that partition (retries, no-change syncs)
     cols = _columns(local, "demand_forecasts")
     tt = local.execute("SELECT MAX(trained_through) m FROM demand_forecasts").fetchone()[0]
-    remote.execute("DELETE FROM demand_forecasts")
-    remote.commit()
-    rows = [tuple(r) for r in local.execute(
-        f"SELECT {', '.join(cols)} FROM demand_forecasts WHERE trained_through=?", (tt,))]
-    stats["demand_forecasts"] = _insert_rows(remote, "demand_forecasts", cols, rows)
+    lcount = local.execute("SELECT COUNT(*) FROM demand_forecasts WHERE trained_through=?",
+                           (tt,)).fetchone()[0]
+    r = None if full else remote.execute(
+        "SELECT MIN(trained_through), MAX(trained_through), COUNT(*) "
+        "FROM demand_forecasts").fetchone()
+    if r and r[0] == tt and r[1] == tt and r[2] == lcount:
+        stats["demand_forecasts"] = 0
+    else:
+        remote.execute("DELETE FROM demand_forecasts")
+        remote.commit()
+        rows = [tuple(r) for r in local.execute(
+            f"SELECT {', '.join(cols)} FROM demand_forecasts WHERE trained_through=?", (tt,))]
+        stats["demand_forecasts"] = _insert_rows(remote, "demand_forecasts", cols, rows)
 
     for table, (date_col, val_col) in DATED_TABLES.items():
         cols = _columns(local, table)
@@ -122,6 +167,14 @@ def sync_turso(local, remote, full: bool = False) -> dict:
                 f"SELECT {', '.join(cols)} FROM {table} WHERE {date_col}=?", (d,))]
             written += _insert_rows(remote, table, cols, rows)
         stats[table] = written
+
+    # parents that vanished locally — removable only now that children are synced
+    for table in reversed(PARENT_TABLES):
+        ids = [r[0] for r in local.execute(f"SELECT id FROM {table}")]
+        if ids:
+            ph = ",".join("?" * len(ids))
+            remote.execute(f"DELETE FROM {table} WHERE id NOT IN ({ph})", ids)
+    remote.commit()
 
     return stats
 

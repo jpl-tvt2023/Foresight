@@ -72,6 +72,11 @@ class _TursoConnection:
     def executemany(self, sql, seq):
         return _Cursor(self._raw.executemany(sql, [tuple(p) for p in seq]))
 
+    def execute_batch(self, stmts):
+        for sql, params in stmts:
+            self._raw.execute(sql, tuple(params))
+        self._raw.commit()
+
     def commit(self):
         self._raw.commit()
 
@@ -125,6 +130,12 @@ class _ClientConnection:
         import libsql_client
         self._client.batch([libsql_client.Statement(sql, list(p)) for p in seq])
         return None
+
+    def execute_batch(self, stmts):
+        """Many statements in ONE transactional HTTP request — the fast path
+        for bulk sync (per-statement round trips dominate otherwise)."""
+        import libsql_client
+        self._client.batch([libsql_client.Statement(sql, list(p)) for sql, p in stmts])
 
     def commit(self):
         pass
@@ -347,7 +358,10 @@ def turso_connect(url: str | None = None, token: str | None = None):
         return _TursoConnection(raw)
     except ImportError:
         import libsql_client
-        return _ClientConnection(libsql_client.create_client_sync(url, auth_token=token))
+        # newer Turso DBs reject the legacy websocket protocol libsql:// implies
+        # in this client — Hrana over HTTP works everywhere
+        http_url = url.replace("libsql://", "https://")
+        return _ClientConnection(libsql_client.create_client_sync(http_url, auth_token=token))
 
 
 def init_db(conn) -> None:

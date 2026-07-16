@@ -4,4 +4,4 @@ __pycache__
 *.db-wal
 *.db-shm
 *.bak
-requirements.txt
+requirements-local.txt

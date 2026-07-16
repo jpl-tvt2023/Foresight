@@ -1,0 +1,10 @@
+# Full local stack: ingest/forecast/balance + the dev server.
+# `pip install -r requirements-local.txt` (pulls the serverless deps too,
+# except libsql which has no Windows/cp314 wheel — libsql-client stands in).
+fastapi>=0.115
+python-multipart>=0.0.9
+uvicorn[standard]>=0.30
+pandas>=3.0
+openpyxl>=3.1
+statsmodels>=0.14
+libsql-client>=0.3

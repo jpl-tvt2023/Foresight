@@ -8,7 +8,10 @@
 /* Palette validated with the dataviz skill's validate_palette.js (2026-07-15):
    categorical light #4f46e5,#0d9488 vs #ffffff — PASS; dark #7787f2,#17a99a vs #171f33 — PASS;
    heat arms (--ordinal) light #f87171/#ef4444/#b91c1c + #60a5fa/#2563eb/#1e40af vs #ffffff — PASS;
-   dark #8a3d3d/#c25252/#f58c8c + #33518c/#3f7cd6/#8ab8f9 vs #171f33 — PASS. Re-run if changed. */
+   dark #8a3d3d/#c25252/#f58c8c + #33518c/#3f7cd6/#8ab8f9 vs #171f33 — PASS. Re-run if changed.
+   2026-07-17: light --neutral-cell #e8ecf3 → #ccd6e6 (was lost on white; user-reported twice).
+   Validated: ΔE vs #f87171 17.9 deutan / 24.3 normal, vs #60a5fa >20 — PASS; surface contrast
+   1.43 (WARN, relieved by in-cell numbers + 1px inset ring on .heat td.has). */
 :root {
   color-scheme: light;
   --surface-1: #ffffff; --page: #f2f5fa;
@@ -17,7 +20,7 @@
   --series-1: #4f46e5; --series-2: #0d9488;
   --accent: #4f46e5; --accent-soft: rgba(79,70,229,0.10); --accent-2: #0d9488;
   --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
-  --neutral-cell: #e8ecf3;
+  --neutral-cell: #ccd6e6;
   --red-3: #b91c1c; --red-2: #ef4444; --red-1: #f87171;
   --blue-1: #60a5fa; --blue-2: #2563eb; --blue-3: #1e40af;
   --band-fill: rgba(79,70,229,0.10);
@@ -114,6 +117,7 @@ table.fit th, table.fit td { padding-right: 28px; }
 .heat tr:first-child th:first-child { z-index: 3; }   /* corner: sticky on both axes */
 .heat td { border: 0; border-radius: 4px; min-width: 44px; height: 26px; text-align: center;
   font-size: 11px; font-variant-numeric: tabular-nums; cursor: default; }
+.heat td.has { box-shadow: inset 0 0 0 1px var(--ring); }
 .heat tr:hover td { background: revert-layer; }
 .heat td:hover { outline: 2px solid var(--ink-2); outline-offset: -1px; }
 .legend { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--ink-2);
@@ -139,6 +143,8 @@ svg .dl { fill: var(--ink-2); font-weight: 600; }
 #tip .r { display: flex; gap: 8px; align-items: center; }
 #tip .r b { font-variant-numeric: tabular-nums; }
 #tip .key { width: 12px; border-top: 2px solid; display: inline-block; }
+#tip .sum { color: var(--ink-3); margin-top: 5px; max-width: 260px; white-space: normal;
+  border-top: 1px dashed var(--grid); padding-top: 5px; }
 details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px; margin-top: 8px; }
 .scrolltbl { max-height: 460px; overflow-y: auto; }
 .scrolltbl th { position: sticky; top: 0; background: var(--surface-1); }
@@ -343,7 +349,8 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
     <div class="card">
       <h2>Upload data</h2>
       <div class="note">Drop in a monthly payout zip (.zip) or a daily sales export (.csv / .xlsx). Ingesting re-runs the whole chain: stock reconstruction → 90-day forecast → balancing alerts. A cycle that's already in is skipped, so re-uploading is safe.</div>
-      <input type="file" id="upFile" accept=".zip,.csv,.xlsx,.xls">
+      <input type="file" id="upFile" accept=".zip,.csv,.xlsx,.xls"
+        title="Drop the monthly payout zip or a daily sales export here — everything downstream (stock, forecast, alerts, cloud sync) runs automatically.">
       <button id="upBtn" class="btn">Ingest</button>
       <div class="banner" id="upBanner" role="status"><span class="ico"></span><div><b></b><span class="msg"></span></div></div>
       <details class="tblview" id="upDetails" style="display:none"><summary>Technical details</summary><div class="uplog" id="upLog"></div></details>
@@ -366,7 +373,7 @@ const el = (tag, attrs = {}, text) => {
 const fmt = n => n == null ? "—" : Number(n).toLocaleString("en-IN");
 const inr = n => n == null ? "—" : "₹" + Math.round(n).toLocaleString("en-IN");
 const tip = $("#tip");
-function showTip(evt, rows, title) {
+function showTip(evt, rows, title, summary) {
   tip.replaceChildren();
   if (title) tip.appendChild(el("div", { class: "t" }, title));
   for (const r of rows) {
@@ -376,6 +383,7 @@ function showTip(evt, rows, title) {
     row.appendChild(el("span", {}, r.label));
     tip.appendChild(row);
   }
+  if (summary) tip.appendChild(el("div", { class: "sum" }, summary));
   tip.style.display = "block";
   const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
   let x = evt.clientX + pad, y = evt.clientY + pad;
@@ -408,20 +416,20 @@ async function loadSummary() {
   const tiles = [
     { lbl: "Stock on hand", val: fmt(s.stock_units), accent: "var(--series-1)",
       sub: `${s.stock_cells} SKU×state cells · as of ${s.as_of} · Mode ${s.stock_mode}`,
-      tip: "Total units across all items and states at the latest snapshot. Mode B = reconstructed from the order/receipt ledger, not a live warehouse count." },
+      tip: `${fmt(s.stock_units)} units are sitting in Blinkit warehouses right now across ${s.stock_cells} item-state combinations. Mode B = rolled forward from the movement ledger, not a live warehouse count.` },
     { lbl: "Stockout alerts", val: s.stockout.n, accent: "var(--critical)",
       sub: inr(s.stockout.value) + " margin at risk",
-      tip: "SKU×state cells forecast to run out within the replenishment lead time. The ₹ figure is the margin lost on demand you couldn't fill." },
+      tip: `${s.stockout.n} city-item combos are about to run out of stock; fixing them protects ${inr(s.stockout.value)} of margin that would otherwise be lost to unfilled orders.` },
     { lbl: "Overstock alerts", val: s.overstock.n, accent: "var(--serious)",
       sub: inr(s.overstock.value) + " net storage saving available",
-      tip: "Cells holding more than 45 days of cover. The ₹ figure is storage cost you could save by recalling the excess, net of recall charges." },
+      tip: `${s.overstock.n} combos hold more than 45 days of stock. Recalling the excess would save ${inr(s.overstock.value)} in storage charges, already net of Blinkit's recall fees.` },
     { lbl: "Forecast", val: s.forecast_cells + " cells", accent: "var(--series-2)",
       sub: "trained through " + s.trained_through,
-      tip: "SKU×state combinations with a 90-day demand forecast, trained on sales up to the date shown." },
+      tip: `Every item in every city gets its own 90-day daily sales forecast — ${s.forecast_cells} in total, retrained on every upload (latest data: ${s.trained_through}).` },
     { lbl: "Backtest error (14d, volume-weighted)", val: s.backtest ? s.backtest.mape_pct + "%" : "—", accent: "var(--accent)",
       sub: s.low_confidence ? "low confidence — under 4 payout cycles of history"
         : `${s.backtest?.n_items ?? 0} SKUs held out` + (s.backtest?.median_ape_pct != null ? ` · median SKU ${s.backtest.median_ape_pct}%` : ""),
-      tip: "Held-out 14-day test: total absolute forecast error ÷ total units actually sold, across all SKUs (dead items included). Volume-weighted so a 2-unit SKU can't swamp the score; the median shows the typical SKU's error. Lower is better; under ~30% is workable for reordering." },
+      tip: `The forecast graded itself on a blind 14-day test: for every 100 units actually sold, it was off by about ${Math.round(s.backtest?.mape_pct ?? 0)}. Weighted by volume so tiny SKUs can't swamp the score. Under ~30 is workable for reordering.` },
   ];
   const wrap = $("#tiles"); wrap.replaceChildren();
   for (const t of tiles) {
@@ -455,7 +463,10 @@ async function loadFeed() {
   tbl.appendChild(hr);
   for (const r of rows) {
     const tr = el("tr");
-    const c0 = el("td"); c0.appendChild(el("span", { class: "badge " + r.risk_type }, r.risk_type)); tr.appendChild(c0);
+    const place = r.city || r.state + " (state-wide)";
+    tr.title = r.risk_type === "stockout"
+      ? `${place} is ${r.units_on_hand > 0 ? "nearly out of" : "out of"} this item — selling ~${r.forecast_daily_demand}/day with ${fmt(r.units_on_hand)} on hand. ${inr(r.priority_score)} of margin at stake if not restocked.`
+      : `${place} holds ${fmt(r.units_on_hand)} units — far more than demand needs. Recalling ~${fmt(r.recommended_units)} saves ${inr(r.priority_score)} after Blinkit's recall fee.`;
     const cId = el("td", {}, r.platform_item_id); hoverName(cId, r.item_name); tr.appendChild(cId);
     const cLoc = el("td", { title: r.state }, r.city || r.state);
     if (!r.city) cLoc.appendChild(el("span", { class: "chip", style: "margin-left:6px" }, "state-wide"));
@@ -484,6 +495,20 @@ const COVER_BINS = [
   { max: 1e12,v: "--blue-3", label: "> 180d / ∞" },
 ];
 const cssv = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// Layman one-liner for a days-of-cover reading (shared: grid, feed, recall)
+function coverStory(cover, units, statewide) {
+  if (cover == null) {
+    if (units > 0) return statewide
+      ? "Dead weight — stock sits here but no city's demand claims it; the clearest recall case."
+      : "Dead weight — stock present but no forecast demand claims it; storage charges keep accruing.";
+    return "";
+  }
+  if (cover < 3)  return "Almost out — runs dry in under 3 days at current demand.";
+  if (cover < 7)  return "Running low — about a week of stock left.";
+  if (cover < 14) return "Below the healthy buffer — plan a top-up.";
+  if (cover <= 45) return "Healthy — enough stock without paying avoidable storage.";
+  return `Overstocked — roughly ${Math.round(cover / 7)} weeks of stock sitting here; storage charges accrue the whole time.`;
+}
 function coverColor(c) {
   if (c == null) return cssv("--blue-3");
   for (const b of COVER_BINS) if (c < b.max) return cssv("--" + b.v.slice(2));
@@ -532,6 +557,7 @@ async function loadGrid() {
         const c = r.days_of_cover;
         const empty = c == null && !(r.units_on_hand > 0);   // no stock, no demand
         const bg = empty ? "transparent" : coverColor(c);
+        if (!empty) td.classList.add("has");
         td.style.background = bg;
         td.style.color = empty ? "var(--ink-3)" : inkFor(bg);
         td.textContent = c == null ? (r.units_on_hand > 0 ? "∞" : "·") : Math.round(c);
@@ -540,7 +566,8 @@ async function loadGrid() {
           { value: fmt(r.units_on_hand), label: r.city ? "units on hand (allocated share)" : "units on hand (state-wide)" },
           { value: String(r.daily_demand), label: "forecast demand/day (" +
             (r.method === "pooled_share" ? "pooled" : r.method === "recent_rate" ? "recent rate — new item" : "measured") + ")" },
-        ], (r.item_name || it) + " — " + (r.city ? r.city + ", " + r.state : r.state + " (state-wide)")));
+        ], (r.item_name || it) + " — " + (r.city ? r.city + ", " + r.state : r.state + " (state-wide)"),
+          empty ? undefined : coverStory(c, r.units_on_hand, !r.city)));
         td.addEventListener("pointerleave", hideTip);
       }
       tr.appendChild(td);
@@ -585,7 +612,7 @@ function registerChart(container, render) {
 function hbars(container, data, opts = {}) {
   registerChart(container, () => renderHbars(container, data, opts));
 }
-function renderHbars(container, data, { valueFmt = fmt, color = "var(--series-1)" } = {}) {
+function renderHbars(container, data, { valueFmt = fmt, color = "var(--series-1)", summary } = {}) {
   container.replaceChildren();
   if (!data.length) { container.textContent = "No data."; return; }
   const w = Math.min(container.clientWidth || 900, 900), rowH = 26,
@@ -599,7 +626,8 @@ function renderHbars(container, data, { valueFmt = fmt, color = "var(--series-1)
     const t = el("text", { x: labelW - 8, y: y + 14, "text-anchor": "end" }, d.label.length > maxCh ? d.label.slice(0, maxCh - 1) + "…" : d.label);
     svg.appendChild(t);
     const r = el("rect", { x: labelW, y, width: bw, height: 18, rx: 4, fill: color });
-    r.addEventListener("pointermove", e => showTip(e, [{ value: valueFmt(d.value), label: "", color }], d.hover || d.label));
+    r.addEventListener("pointermove", e => showTip(e, [{ value: valueFmt(d.value), label: "", color }],
+      d.hover || d.label, summary ? summary(d, i) : undefined));
     r.addEventListener("pointerleave", hideTip);
     svg.appendChild(r);
     if (d.hover) { t.style.cursor = "default"; hoverName(t, d.hover); }
@@ -612,15 +640,17 @@ function renderHbars(container, data, { valueFmt = fmt, color = "var(--series-1)
 async function loadStorage() {
   const s = await (await fetch("/api/storage")).json();
   $("#stTitle").textContent = `Storage charges by SKU — cycle ${s.cycle}`;
-  hbars($("#stBars"), s.by_item.map(d => ({ label: d.platform_item_id, hover: d.item_name, value: d.amount })), { valueFmt: inr });
+  hbars($("#stBars"), s.by_item.map(d => ({ label: d.platform_item_id, hover: d.item_name, value: d.amount })),
+    { valueFmt: inr, summary: (d, i) => `This item cost ${inr(d.value)} in storage last cycle — the #${i + 1} biggest drain on the payout.` });
   const t = $("#stTbl"); t.replaceChildren();
   const hr = el("tr"); ["Item ID", "Amount (₹)"].forEach((h, i) => hr.appendChild(el("th", { class: i ? "num" : "" }, h))); t.appendChild(hr);
-  for (const d of s.by_item) {
+  s.by_item.forEach((d, i) => {
     const tr = el("tr");
+    tr.title = `This item cost ${inr(d.amount)} in storage last cycle — the #${i + 1} biggest drain on the payout.`;
     const cId = el("td", {}, d.platform_item_id); hoverName(cId, d.item_name); tr.appendChild(cId);
     tr.appendChild(el("td", { class: "num" }, fmt(d.amount)));
     t.appendChild(tr);
-  }
+  });
 
   const st = $("#slabTbl"); st.replaceChildren();
   const h2 = el("tr");
@@ -631,6 +661,7 @@ async function loadStorage() {
   st.appendChild(h2);
   for (const d of s.slabs) {
     const tr = el("tr");
+    tr.title = `${fmt(d.units)} units have been in storage ${(d.ageing_slab || "an unknown time").toLowerCase()} — costing ₹${fmt(d.daily_cost)} every day, and the rate climbs if they keep sitting.`;
     tr.appendChild(el("td", {}, d.ageing_slab || "—"));
     tr.appendChild(el("td", { class: "num" }, fmt(d.units)));
     tr.appendChild(el("td", { class: "num" }, fmt(d.daily_cost)));
@@ -650,6 +681,7 @@ async function loadStorage() {
   rc.appendChild(h3);
   for (const d of s.recall_candidates) {
     const tr = el("tr");
+    tr.title = `${fmt(d.units_on_hand)} units in ${d.city || d.state} is ${d.days_of_cover == null ? "endless" : "~" + d.days_of_cover + " days of"} cover — recalling ~${fmt(d.recommended_units)} saves ${inr(d.net_saving)} after Blinkit's recall fee. ${coverStory(d.days_of_cover, d.units_on_hand, !d.city)}`;
     const cId = el("td", {}, d.platform_item_id); hoverName(cId, d.item_name); tr.appendChild(cId);
     const cLoc = el("td", { title: d.state }, d.city || d.state);
     if (!d.city) cLoc.appendChild(el("span", { class: "chip", style: "margin-left:6px" }, "state-wide"));
@@ -668,7 +700,7 @@ async function loadStorage() {
 function lineChart(container, spec) {
   registerChart(container, () => renderLineChart(container, spec));
 }
-function renderLineChart(container, { hist = [], fc = [], yLabel = "units/day" }) {
+function renderLineChart(container, { hist = [], fc = [], yLabel = "units/day", histLabel = "sold", summary }) {
   container.replaceChildren();
   const all = [...hist.map(d => ({ x: d.d, y: d.units })), ...fc.map(d => ({ x: d.d, y: d.point }))];
   if (!all.length) { container.textContent = "No data."; return; }
@@ -721,9 +753,9 @@ function renderLineChart(container, { hist = [], fc = [], yLabel = "units/day" }
     cross.setAttribute("x1", X(best)); cross.setAttribute("x2", X(best));
     cross.setAttribute("visibility", "visible");
     const v = idx[best], rows = [];
-    if (v.hist != null) rows.push({ value: fmt(v.hist), label: "sold", color: cssv("--series-1") });
+    if (v.hist != null) rows.push({ value: fmt(v.hist), label: histLabel, color: cssv("--series-1") });
     if (v.fc != null) rows.push({ value: fmt(Math.round(v.fc)), label: `forecast (80%: ${Math.round(v.lo)}–${Math.round(v.hi)})`, color: cssv("--series-1") });
-    showTip(e, rows, best);
+    showTip(e, rows, best, summary ? summary(v, best) : undefined);
   });
   svg.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
   container.appendChild(svg);
@@ -778,6 +810,8 @@ async function loadDemand() {
   t.appendChild(hr);
   for (const f of d.forecast) {
     const tr = el("tr");
+    const wd = new Date(f.d).toLocaleDateString("en-IN", { weekday: "long" });
+    tr.title = `Expect ~${Math.round(f.point)} on ${wd}; stock for up to ${Math.round(f.hi)} to be covered 8 days in 10.`;
     tr.appendChild(el("td", {}, f.d));
     tr.appendChild(el("td", {}, new Date(f.d).toLocaleDateString("en-IN", { weekday: "short" })));
     [f.point, f.lo, f.hi].forEach(v => tr.appendChild(el("td", { class: "num" }, String(Math.round(v)))));
@@ -785,7 +819,9 @@ async function loadDemand() {
   }
   if (!d.forecast.length) t.appendChild(el("tr")).appendChild(el("td", {}, "No forecast for this selection."));
   $("#sScope").textContent = d.stock_scope || "";
-  lineChart($("#sChart"), { hist: d.stock.map(s => ({ d: s.d, units: s.units })), fc: [], yLabel: "units" });
+  lineChart($("#sChart"), { hist: d.stock.map(s => ({ d: s.d, units: s.units })), fc: [], yLabel: "units",
+    histLabel: "units in storage",
+    summary: v => v.hist != null ? `≈${fmt(v.hist)} units were sitting in Blinkit storage this day (counted or ledger-reconstructed).` : undefined });
 }
 
 /* ---------- payout ---------- */
@@ -797,21 +833,26 @@ async function loadPayout() {
   for (const c of data) hr.appendChild(el("th", { class: "num" }, c.cycle));
   tbl.appendChild(hr);
   const keys = data[0].particulars.map(p => p.particular);
+  const latest = data[data.length - 1];
   for (const k of keys) {
     const vals = data.map(c => c.particulars.find(p => p.particular === k)?.total_amount);
     if (vals.every(v => !v)) continue;
     const tr = el("tr");
+    const lastVal = vals[vals.length - 1];
+    tr.title = `${k}: ${lastVal == null ? "didn't appear" : "₹" + fmt(Math.round(lastVal))} in the latest cycle (${latest.cycle}). “—” means the line didn't appear that month.`;
     tr.appendChild(el("td", {}, k));
     vals.forEach(v => tr.appendChild(el("td", { class: "num" }, v == null ? "—" : fmt(Math.round(v)))));
     tbl.appendChild(tr);
   }
-  const latest = data[data.length - 1];
-  hbars($("#poBars"), latest.charges.map(c => ({ label: `${c.charge_type} (${latest.cycle})`, value: c.amount })), { valueFmt: inr });
+  hbars($("#poBars"), latest.charges.map(c => ({ label: `${c.charge_type} (${latest.cycle})`, value: c.amount })),
+    { valueFmt: inr, summary: (d, i) => `${inr(d.value)} was deducted from the payout for this — the #${i + 1} largest deduction in ${latest.cycle}.` });
   const ct = $("#poChTbl"); ct.replaceChildren();
   const h2 = el("tr"); ["Charge type", ...data.map(c => c.cycle + " (₹)")].forEach((h, i) => h2.appendChild(el("th", { class: i ? "num" : "" }, h))); ct.appendChild(h2);
   const types = [...new Set(data.flatMap(c => c.charges.map(x => x.charge_type)))];
   for (const ty of types) {
     const tr = el("tr"); tr.appendChild(el("td", {}, ty));
+    const lastV = latest.charges.find(x => x.charge_type === ty)?.amount;
+    tr.title = `What Blinkit deducted as “${ty}” each month — ${lastV == null ? "nothing" : inr(lastV)} in the latest cycle (${latest.cycle}).`;
     for (const c of data) {
       const v = c.charges.find(x => x.charge_type === ty)?.amount;
       tr.appendChild(el("td", { class: "num" }, v == null ? "—" : fmt(v)));

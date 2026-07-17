@@ -60,7 +60,7 @@ nav button { border: 1px solid transparent; background: none; color: var(--ink-2
 nav button:hover { background: var(--accent-soft); color: var(--ink-1); }
 nav button.on { color: var(--accent); font-weight: 650; background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
-main { padding: 18px 24px 48px; max-width: 1280px; }
+main { padding: 18px 24px 48px; }
 section { display: none; } section.on { display: block; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .tile { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 14px;
@@ -656,7 +656,7 @@ function hbars(container, data, opts = {}) {
 function renderHbars(container, data, { valueFmt = fmt, color = "var(--series-1)", summary } = {}) {
   container.replaceChildren();
   if (!data.length) { container.textContent = "No data."; return; }
-  const w = Math.min(container.clientWidth || 900, 900), rowH = 26,
+  const w = Math.min(container.clientWidth || 900, 1200), rowH = 26,
         labelW = Math.min(260, Math.round(w * 0.32)), valW = 76;
   const max = Math.max(...data.map(d => d.value));
   const svg = el("svg", { width: w, height: data.length * rowH + 6, role: "img" });
@@ -745,7 +745,7 @@ function renderLineChart(container, { hist = [], fc = [], yLabel = "units/day", 
   container.replaceChildren();
   const all = [...hist.map(d => ({ x: d.d, y: d.units })), ...fc.map(d => ({ x: d.d, y: d.point }))];
   if (!all.length) { container.textContent = "No data."; return; }
-  const w = Math.min(container.clientWidth || 960, 960), h = 260, padL = 46, padR = 12, padT = 10, padB = 26;
+  const w = Math.min(container.clientWidth || 960, 1500), h = 260, padL = 46, padR = 12, padT = 10, padB = 26;
   const xs = all.map(d => d.x).sort();
   const x0 = new Date(xs[0]), x1 = new Date(xs[xs.length - 1]);
   const span = Math.max(1, x1 - x0);

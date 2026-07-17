@@ -7,3 +7,4 @@ __pycache__/
 *.bak
 .env
 .vercel
+PLAN.md

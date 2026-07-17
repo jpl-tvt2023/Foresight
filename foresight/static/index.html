@@ -86,16 +86,21 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chip { font-size: 11px; color: var(--ink-3); border: 1px solid var(--grid); border-radius: 999px; padding: 1px 8px; }
 .filters { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
 select, input[type=file] { font: inherit; color: var(--ink-1); background: var(--surface-1);
-  border: 1px solid var(--axis); border-radius: 9px; padding: 6px 9px; }
+  border: 1px solid var(--axis); border-radius: 9px; padding: 6px 9px; max-width: 100%; }
 select:focus, input:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .btn { font: inherit; font-weight: 600; padding: 7px 16px; border-radius: 9px; border: 0;
   background: var(--series-1); color: #fff; cursor: pointer; box-shadow: var(--shadow); }
 .btn:hover { filter: brightness(1.08); }
 .btn:disabled { opacity: .55; cursor: wait; }
 .gridwrap { overflow-x: auto; }
+.tblwrap { overflow-x: auto; }
+table.fit { width: auto; min-width: min(100%, 480px); }
+table.fit th, table.fit td { padding-right: 28px; }
 .heat { border-collapse: separate; border-spacing: 2px; }
 .heat th { border: 0; padding: 3px 6px; font-size: 11px; white-space: nowrap; }
 .heat th.rowh { text-align: right; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heat th.rowh, .heat tr:first-child th:first-child { position: sticky; left: 0;
+  background: var(--surface-1); z-index: 2; }
 .heat td { border: 0; border-radius: 4px; width: 44px; min-width: 44px; height: 26px; text-align: center;
   font-size: 11px; font-variant-numeric: tabular-nums; cursor: default; }
 .heat tr:hover td { background: revert-layer; }
@@ -147,8 +152,23 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
 .banner.busy b { color: var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .uplog { white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
-  color: var(--ink-2); margin-top: 8px; }
+  color: var(--ink-2); margin-top: 8px; overflow-wrap: anywhere; }
 .warn { color: var(--serious); font-size: 12px; }
+.scrolltbl { overflow-x: auto; }
+@media (max-width: 700px) {
+  header { padding: 14px 14px 0; }
+  h1 { font-size: 16px; }
+  h1 small { display: block; margin-left: 0; margin-top: 2px; }
+  nav { padding: 10px 12px; gap: 4px; }
+  nav button { padding: 6px 10px; }
+  main { padding: 14px 12px 40px; }
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px; }
+  .tile .val { font-size: 22px; }
+  .card { padding: 14px; }
+  .fieldguide dl { grid-template-columns: 1fr; gap: 2px 0; }
+  .fieldguide dt { margin-top: 6px; }
+  #upFile, #upBtn { display: block; width: 100%; margin-top: 8px; }
+}
 </style>
 </head>
 <body>
@@ -179,7 +199,7 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
     <div class="card">
       <h2>Act on these — ranked by ₹ at stake</h2>
       <div class="note">Every row is one SKU in one city that needs action. Hover an Item ID to see the product name; hover a dotted column header for its definition.</div>
-      <table id="feedTbl"></table>
+      <div class="tblwrap"><table id="feedTbl"></table></div>
       <div class="legend">
         <span class="k"><span class="badge stockout">stockout</span> about to run out — send stock in</span>
         <span class="k"><span class="badge overstock">overstock</span> paying storage on excess — recall stock</span>
@@ -230,12 +250,12 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
       <h2 id="stTitle">Storage charges by SKU</h2>
       <div class="note">What each item cost you in Blinkit warehouse storage during the latest payout cycle (ex-GST). Longer bar = bigger deduction from your payout.</div>
       <div id="stBars"></div>
-      <details class="tblview"><summary>Table view</summary><table id="stTbl"></table></details>
+      <details class="tblview"><summary>Table view</summary><div class="tblwrap"><table id="stTbl" class="fit"></table></div></details>
     </div>
     <div class="card">
       <h2>Units by ageing slab (latest counted day)</h2>
       <div class="note">Blinkit charges storage per unit per day, and the rate climbs as stock ages. Units drifting into higher slabs are the recall lever's target.</div>
-      <table id="slabTbl"></table>
+      <div class="tblwrap"><table id="slabTbl" class="fit"></table></div>
       <details class="fieldguide"><summary>ⓘ What each field means</summary>
         <dl>
           <dt>Ageing slab</dt><dd>How long the units have sat in the warehouse (e.g. 0–30 days, 31–60…). Higher slab = higher per-unit daily rate.</dd>
@@ -247,7 +267,7 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
     <div class="card">
       <h2>Recall candidates</h2>
       <div class="note">Overstocked cells where pulling stock back saves more in storage than the recall costs — ranked by net saving.</div>
-      <table id="recallTbl"></table>
+      <div class="tblwrap"><table id="recallTbl"></table></div>
       <details class="fieldguide"><summary>ⓘ What each field means</summary>
         <dl>
           <dt>On hand / Cover (d)</dt><dd>Current units in that state and how many days they'd last at forecast demand.</dd>
@@ -268,12 +288,12 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
     <div class="card">
       <h2>90-day demand forecast — day by day</h2>
       <div class="note">One row per day: the model's best estimate plus an 80% range. Bands widen with horizon — near-term rows are plannable, day-90 is an envelope.</div>
-      <div class="scrolltbl"><table id="dTbl"></table></div>
+      <div class="scrolltbl"><table id="dTbl" class="fit"></table></div>
       <details class="fieldguide"><summary>ⓘ What each field means</summary>
         <dl>
           <dt>Forecast units</dt><dd>The model's point estimate of units sold that day.</dd>
           <dt>Lo 80 / Hi 80</dt><dd>The 80% interval — on 8 days out of 10, actual sales should land between these. Plan safety stock off Hi 80, not the point.</dd>
-          <dt>measured / pooled</dt><dd>The chip above: measured = model trained on this cell's own sales; pooled = too little history, so it gets a share of the national forecast.</dd>
+          <dt>measured / pooled / recent rate</dt><dd>The chip above: measured = model trained on this cell's own sales; pooled = too little history, so it gets a share of the national forecast; recent rate = new item (under 28 days since first sale) — a flat trailing 14-day rate over in-stock days, no weekly pattern yet.</dd>
         </dl>
       </details>
     </div>
@@ -292,7 +312,7 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
     <div class="card">
       <h2>Payout breakup by cycle</h2>
       <div class="note">Blinkit's own summary of what you were paid and what was deducted, one column per monthly payout cycle — straight from the Payout Breakup sheet.</div>
-      <table id="poTbl"></table>
+      <div class="tblwrap"><table id="poTbl"></table></div>
       <details class="fieldguide"><summary>ⓘ What each field means</summary>
         <dl>
           <dt>Particular</dt><dd>A line item in Blinkit's payout statement — sale value, commissions, logistics fees, storage, taxes, and the final payable.</dd>
@@ -304,7 +324,7 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
       <h2>Deductions by type — latest cycle</h2>
       <div class="note">The deduction detail rows behind the summary above, grouped by charge type (ex-GST). Storage is usually the biggest lever.</div>
       <div id="poBars"></div>
-      <details class="tblview"><summary>Table view — all cycles</summary><table id="poChTbl"></table></details>
+      <details class="tblview"><summary>Table view — all cycles</summary><div class="tblwrap"><table id="poChTbl"></table></div></details>
     </div>
   </section>
 
@@ -387,9 +407,10 @@ async function loadSummary() {
     { lbl: "Forecast", val: s.forecast_cells + " cells", accent: "var(--series-2)",
       sub: "trained through " + s.trained_through,
       tip: "SKU×state combinations with a 90-day demand forecast, trained on sales up to the date shown." },
-    { lbl: "Backtest MAPE (14d, per SKU)", val: s.backtest ? s.backtest.mape_pct + "%" : "—", accent: "var(--accent)",
-      sub: s.low_confidence ? "low confidence — under 4 payout cycles of history" : `${s.backtest?.n_items ?? 0} SKUs held out`,
-      tip: "How wrong the forecast was on a held-out 14-day window (mean absolute % error). Lower is better; under ~30% is workable for reordering." },
+    { lbl: "Backtest error (14d, volume-weighted)", val: s.backtest ? s.backtest.mape_pct + "%" : "—", accent: "var(--accent)",
+      sub: s.low_confidence ? "low confidence — under 4 payout cycles of history"
+        : `${s.backtest?.n_items ?? 0} SKUs held out` + (s.backtest?.median_ape_pct != null ? ` · median SKU ${s.backtest.median_ape_pct}%` : ""),
+      tip: "Held-out 14-day test: total absolute forecast error ÷ total units actually sold, across all SKUs (dead items included). Volume-weighted so a 2-unit SKU can't swamp the score; the median shows the typical SKU's error. Lower is better; under ~30% is workable for reordering." },
   ];
   const wrap = $("#tiles"); wrap.replaceChildren();
   for (const t of tiles) {
@@ -506,7 +527,8 @@ async function loadGrid() {
         td.addEventListener("pointermove", e => showTip(e, [
           { value: r.days_of_cover == null ? "∞" : r.days_of_cover + " d", label: "days of cover" },
           { value: fmt(r.units_on_hand), label: r.city ? "units on hand (allocated share)" : "units on hand (state-wide)" },
-          { value: String(r.daily_demand), label: "forecast demand/day (" + (r.method === "pooled_share" ? "pooled" : "measured") + ")" },
+          { value: String(r.daily_demand), label: "forecast demand/day (" +
+            (r.method === "pooled_share" ? "pooled" : r.method === "recent_rate" ? "recent rate — new item" : "measured") + ")" },
         ], (r.item_name || it) + " — " + (r.city ? r.city + ", " + r.state : r.state + " (state-wide)")));
         td.addEventListener("pointerleave", hideTip);
       }
@@ -529,17 +551,41 @@ async function loadGrid() {
   }
 }
 
+/* ---------- responsive chart re-render: one ResizeObserver, rAF-debounced.
+   Re-renders when a container's width changes (incl. hidden-tab 0-width → visible). */
+const CHARTS = new Map();               // container -> { render, w }
+let chartRaf = 0;
+const chartRO = new ResizeObserver(entries => {
+  cancelAnimationFrame(chartRaf);
+  chartRaf = requestAnimationFrame(() => {
+    for (const { target } of entries) {
+      const c = CHARTS.get(target);
+      if (c && target.clientWidth !== c.w) { c.w = target.clientWidth; c.render(); }
+    }
+  });
+});
+function registerChart(container, render) {
+  if (!CHARTS.has(container)) chartRO.observe(container);
+  CHARTS.set(container, { render, w: container.clientWidth });
+  render();
+}
+
 /* ---------- horizontal bars (single series, slot 1) ---------- */
-function hbars(container, data, { valueFmt = fmt, color = "var(--series-1)" } = {}) {
+function hbars(container, data, opts = {}) {
+  registerChart(container, () => renderHbars(container, data, opts));
+}
+function renderHbars(container, data, { valueFmt = fmt, color = "var(--series-1)" } = {}) {
   container.replaceChildren();
   if (!data.length) { container.textContent = "No data."; return; }
-  const w = Math.min(container.clientWidth || 900, 900), rowH = 26, labelW = 260, valW = 76;
+  const w = Math.min(container.clientWidth || 900, 900), rowH = 26,
+        labelW = Math.min(260, Math.round(w * 0.32)), valW = 76;
   const max = Math.max(...data.map(d => d.value));
   const svg = el("svg", { width: w, height: data.length * rowH + 6, role: "img" });
   data.forEach((d, i) => {
     const y = i * rowH + 4;
     const bw = Math.max(2, (w - labelW - valW) * (d.value / max));
-    const t = el("text", { x: labelW - 8, y: y + 14, "text-anchor": "end" }, d.label.length > 38 ? d.label.slice(0, 37) + "…" : d.label);
+    const maxCh = Math.max(10, Math.floor(labelW / 6.8));
+    const t = el("text", { x: labelW - 8, y: y + 14, "text-anchor": "end" }, d.label.length > maxCh ? d.label.slice(0, maxCh - 1) + "…" : d.label);
     svg.appendChild(t);
     const r = el("rect", { x: labelW, y, width: bw, height: 18, rx: 4, fill: color });
     r.addEventListener("pointermove", e => showTip(e, [{ value: valueFmt(d.value), label: "", color }], d.hover || d.label));
@@ -608,7 +654,10 @@ async function loadStorage() {
 }
 
 /* ---------- line chart with band + crosshair ---------- */
-function lineChart(container, { hist = [], fc = [], yLabel = "units/day" }) {
+function lineChart(container, spec) {
+  registerChart(container, () => renderLineChart(container, spec));
+}
+function renderLineChart(container, { hist = [], fc = [], yLabel = "units/day" }) {
   container.replaceChildren();
   const all = [...hist.map(d => ({ x: d.d, y: d.units })), ...fc.map(d => ({ x: d.d, y: d.point }))];
   if (!all.length) { container.textContent = "No data."; return; }
@@ -704,7 +753,9 @@ async function loadDemand() {
   const d = await (await fetch(`/api/demand?item_id=${iid}` + (lid ? `&location_id=${lid}` : ""))).json();
   const method = d.forecast[0]?.method;
   $("#dMethod").textContent = !method ? "no forecast" :
-    method === "pooled_share" ? "pooled estimate — thin cell, allocated from national" : "measured — direct model on this cell";
+    method === "pooled_share" ? "pooled estimate — thin cell, allocated from national" :
+    method === "recent_rate" ? "recent rate — new item, trailing 14-day in-stock rate" :
+    "measured — direct model on this cell";
   const t = $("#dTbl"); t.replaceChildren();
   const hr = el("tr");
   [["Date", "", "Forecast calendar date"],

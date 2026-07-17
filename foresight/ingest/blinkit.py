@@ -180,7 +180,7 @@ def ingest_monthly_zip(conn, zip_path: str | Path, cycle_label: str | None = Non
         stats |= _ingest_ageing(conn, zf, smap, pid, cycle_id, loc_id)
         stats |= _ingest_upfront_grn(conn, zf, smap, pid, cycle_id, loc_id, warehouse_state)
         stats |= _ingest_recall(conn, zf, smap, pid, cycle_id, loc_id, warehouse_state)
-        stats |= _ingest_lost_damaged(conn, zf, smap, pid, cycle_id, loc_id)
+        stats |= _ingest_lost_damaged(conn, zf, smap, pid, cycle_id, loc_id, period_end)
         stats |= _ingest_simple_charges(conn, zf, smap, cycle_id)
         stats |= _ingest_payout_breakup(conn, zf, smap, cycle_id)
 
@@ -411,10 +411,14 @@ def _ingest_recall(conn, zf, smap, pid, cycle_id, loc_id, warehouse_state) -> di
     return {"recall_rows": n}
 
 
-def _ingest_lost_damaged(conn, zf, smap, pid, cycle_id, loc_id) -> dict:
+def _ingest_lost_damaged(conn, zf, smap, pid, cycle_id, loc_id, period_end=None) -> dict:
     wb, ws = _open_sheet(zf, smap, "Lost Damaged Inventory")
     if ws is None:
         return {}
+    # The sheet has no event date; anchor the stock adjustment to the cycle's
+    # period end so rebuilds are reproducible (date('now') made the same zip
+    # reconstruct differently depending on the day it was re-ingested).
+    event_date = period_end or date.today().isoformat()
     n = 0
     for r in _sheet_rows(ws, "Item ID"):
         item = r.get("Item ID")
@@ -431,8 +435,8 @@ def _ingest_lost_damaged(conn, zf, smap, pid, cycle_id, loc_id) -> dict:
             (cycle_id, "lost_damaged", iid, lid, units, amt))
         conn.execute(
             "INSERT INTO stock_ledger(platform_id, item_id, location_id, event_date, event_type, units_delta, note) "
-            "VALUES (?,?,?, date('now'), 'adjustment', ?, 'lost/damaged inventory')",
-            (pid, iid, lid, -units))
+            "VALUES (?,?,?,?, 'adjustment', ?, 'lost/damaged inventory')",
+            (pid, iid, lid, event_date, -units))
         n += 1
     wb.close()
     return {"lost_damaged_rows": n}

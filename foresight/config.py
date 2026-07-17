@@ -23,9 +23,11 @@ MAX_COVER_DAYS = 45              # cover ceiling before overstock fires
 FORECAST_HORIZON_DAYS = 90       # rolling planning horizon
 RECENT_DEMAND_WINDOW = 14        # days averaged for forecast_daily_demand
 
-# --- Forecast pooling thresholds (dense vs sparse SKU×state cells) ---
+# --- Forecast pooling thresholds (dense vs sparse SKU×city cells) ---
 DENSE_MIN_DAYS = 21              # minimum days of history for a direct model
 DENSE_MIN_UNITS = 90             # minimum total units for a direct model
+RECENT_RATE_MIN_DAYS = 28        # below this history, skip ETS: use recent in-stock rate
+RECENT_RATE_WINDOW = 14          # trailing days averaged for the recent-rate fallback
 POOL_SHARE_WINDOW = 28           # days used to compute allocation shares
 LOW_CONFIDENCE_CYCLES = 4        # cycles below which forecasts are labeled low-confidence
 

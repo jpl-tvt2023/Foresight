@@ -20,6 +20,7 @@ import pandas as pd
 from foresight import db
 from foresight.config import (
     DENSE_MIN_DAYS, DENSE_MIN_UNITS, FORECAST_HORIZON_DAYS, POOL_SHARE_WINDOW,
+    RECENT_RATE_MIN_DAYS, RECENT_RATE_WINDOW,
 )
 
 Z80 = 1.2816
@@ -41,10 +42,53 @@ def _daily_series(df: pd.DataFrame, start, end) -> pd.Series:
     return s.astype(float)
 
 
+def _load_zero_stock(conn) -> dict[int, set[str]]:
+    """Dates each item had zero counted stock nationally (censored demand).
+
+    Counted = ageing/reconstructed/panel snapshots ('allocated' rows are the
+    balancing run's estimates, not counts). Items with no snapshot history at
+    all get no entry — their series are never masked.
+    """
+    out: dict[int, set[str]] = {}
+    for r in conn.execute("""
+        SELECT item_id, as_of_date, SUM(units_on_hand) AS u
+        FROM stock_snapshots WHERE source != 'allocated'
+        GROUP BY item_id, as_of_date"""):
+        if r["u"] <= 0:
+            out.setdefault(r["item_id"], set()).add(r["as_of_date"])
+    return out
+
+
+def _mask_censored(s: pd.Series, zero_dates: set[str]) -> pd.Series:
+    """Zero-sales days that were zero-stock days aren't demand signal — mark
+    them missing so models don't learn that demand died while shelves were bare."""
+    if not zero_dates:
+        return s
+    censored = (s.values == 0) & np.array(
+        [d.date().isoformat() in zero_dates for d in s.index])
+    if not censored.any():
+        return s
+    s = s.copy()
+    s[censored] = np.nan
+    return s
+
+
 def _fit_forecast(series: pd.Series, horizon: int) -> tuple[np.ndarray, float, str]:
-    """Return (point forecasts, residual sigma, method)."""
-    y = series.values
-    if len(y) >= 21 and y.sum() > 0:
+    """Return (point forecasts, residual sigma, method).
+
+    NaNs in `series` are censored (zero-stock) days: interpolated for ETS,
+    skipped in the naive path's means.
+    """
+    # Too little history for weekly structure: flat trailing in-stock rate.
+    if len(series) < RECENT_RATE_MIN_DAYS:
+        tail = series[-RECENT_RATE_WINDOW:]
+        rate = float(np.nanmean(tail.values)) if np.isfinite(tail.values).any() else 0.0
+        rate = max(rate, 0.0)
+        sigma = float(np.nanstd(tail.values)) if np.isfinite(tail.values).sum() > 1 else max(rate, 1.0)
+        return np.full(horizon, rate), sigma, "recent_rate"
+
+    y = series.interpolate(limit_direction="both").values
+    if len(y) >= 21 and np.nansum(y) > 0:
         try:
             from statsmodels.tsa.holtwinters import ExponentialSmoothing
             with warnings.catch_warnings():
@@ -60,18 +104,23 @@ def _fit_forecast(series: pd.Series, horizon: int) -> tuple[np.ndarray, float, s
                 return np.clip(fc, 0, None), sigma, "ets"
         except Exception:
             pass
-    # seasonal-naive with drift: average by weekday over last 28 days + linear drift
+    # seasonal-naive with drift: average by weekday over last 28 days + linear
+    # drift (means skip censored NaN days)
     tail = series[-28:] if len(series) >= 28 else series
     by_dow = tail.groupby(tail.index.dayofweek).mean()
     overall = float(tail.mean()) if len(tail) else 0.0
+    if not np.isfinite(overall):
+        overall = 0.0
     drift = 0.0
     if len(series) >= 28:
-        drift = (series[-14:].mean() - series[-28:-14].mean()) / 14.0
+        d = (series[-14:].mean() - series[-28:-14].mean()) / 14.0
+        drift = float(d) if np.isfinite(d) else 0.0
     last_day = series.index[-1]
     fc = np.array([
         max(0.0, by_dow.get((last_day + timedelta(days=h + 1)).dayofweek, overall) + drift * (h + 1))
         for h in range(horizon)])
-    sigma = float(tail.std()) if len(tail) > 1 else max(overall, 1.0)
+    fc = np.nan_to_num(fc, nan=overall)
+    sigma = float(tail.std()) if tail.notna().sum() > 1 else max(overall, 1.0)
     return fc, sigma, "naive_drift"
 
 
@@ -82,7 +131,6 @@ def run_forecast(conn, horizon: int = FORECAST_HORIZON_DAYS) -> dict:
         return {"forecast_cells": 0}
 
     trained_through = df["sale_date"].max()
-    start = df["sale_date"].min()
     tt_iso = trained_through.date().isoformat()
     future_dates = [(trained_through + timedelta(days=h + 1)).date().isoformat()
                     for h in range(horizon)]
@@ -91,9 +139,15 @@ def run_forecast(conn, horizon: int = FORECAST_HORIZON_DAYS) -> dict:
 
     stats = {"direct": 0, "pooled": 0, "cells": 0}
     share_cutoff = trained_through - timedelta(days=POOL_SHARE_WINDOW - 1)
+    zero_stock = _load_zero_stock(conn)
 
     for item_id, item_df in df.groupby("item_id"):
-        nat = _daily_series(item_df, start, trained_through)
+        # National series starts at the item's own first sale — padding a
+        # late launch back to the global start trains on fake zero days.
+        item_zero = zero_stock.get(item_id, set())
+        nat = _mask_censored(
+            _daily_series(item_df, item_df["sale_date"].min(), trained_through),
+            item_zero)
         nat_fc, nat_sigma, nat_method = _fit_forecast(nat, horizon)
 
         recent = item_df[item_df["sale_date"] >= share_cutoff]
@@ -102,19 +156,23 @@ def run_forecast(conn, horizon: int = FORECAST_HORIZON_DAYS) -> dict:
 
         for loc_id, cell_df in item_df.groupby("location_id"):
             first_sale = cell_df["sale_date"].min()
-            cell = _daily_series(cell_df, first_sale, trained_through)
+            cell = _mask_censored(
+                _daily_series(cell_df, first_sale, trained_through), item_zero)
             n_days = len(cell)
-            total_units = float(cell.sum())
+            total_units = float(np.nansum(cell.values))
 
             if n_days >= DENSE_MIN_DAYS and total_units >= DENSE_MIN_UNITS:
                 fc, sigma, m = _fit_forecast(cell, horizon)
-                method = "ets_direct" if m == "ets" else "naive_drift"
+                method = "ets_direct" if m == "ets" else m
             else:
                 share = (float(recent_by_loc.get(loc_id, 0.0)) / recent_total
                          if recent_total > 0 else 0.0)
                 fc = nat_fc * share
                 sigma = nat_sigma * max(share, 0.02)
-                method = "pooled_share"
+                # New items (< RECENT_RATE_MIN_DAYS of history) surface as
+                # 'recent_rate' so the UI can say "recent rate — new item"
+                # instead of implying a modeled pooled forecast.
+                method = "recent_rate" if nat_method == "recent_rate" else "pooled_share"
 
             rows = []
             for h in range(horizon):
@@ -137,9 +195,13 @@ def run_forecast(conn, horizon: int = FORECAST_HORIZON_DAYS) -> dict:
 
 
 def backtest_mape(conn, holdout_days: int = 14) -> dict | None:
-    """Hold out the last `holdout_days`, retrain, report MAPE at SKU-national level.
+    """Hold out the last `holdout_days`, retrain, report accuracy at SKU-national level.
 
-    Honesty gauge for the dashboard (spec §7.5); needs enough history to matter.
+    Honesty gauge for the dashboard (spec §7.5). Headline `mape_pct` is
+    volume-weighted (sum of absolute errors / total units sold), so a 2-unit
+    item can't swamp the metric and dead items still pay for overforecasts.
+    Each item trains from its own first sale with censored (zero-stock) days
+    masked — same treatment as production.
     """
     df = _load_sales(conn)
     if df.empty:
@@ -149,15 +211,21 @@ def backtest_mape(conn, holdout_days: int = 14) -> dict | None:
     train, test = df[df["sale_date"] <= cut], df[df["sale_date"] > cut]
     if train["sale_date"].nunique() < 28 or test.empty:
         return None
-    results = []
+    zero_stock = _load_zero_stock(conn)
+    pairs = []                                    # (actual, forecast) per item
     for item_id, g in train.groupby("item_id"):
-        s = _daily_series(g, train["sale_date"].min(), cut)
+        s = _mask_censored(_daily_series(g, g["sale_date"].min(), cut),
+                           zero_stock.get(item_id, set()))
         fc, _, _ = _fit_forecast(s, holdout_days)
         actual = _daily_series(test[test["item_id"] == item_id], cut + timedelta(days=1), end)
-        a, f = float(actual.sum()), float(fc.sum())
-        if a > 0:
-            results.append(abs(a - f) / a)
-    if not results:
+        pairs.append((float(actual.sum()), float(fc.sum())))
+    total_vol = sum(a for a, _ in pairs)
+    if not pairs or total_vol <= 0:
         return None
-    return {"holdout_days": holdout_days, "n_items": len(results),
-            "mape_pct": round(100 * float(np.mean(results)), 1)}
+    weighted = sum(abs(a - f) for a, f in pairs) / total_vol
+    apes = [abs(a - f) / a for a, f in pairs if a > 0]
+    apes_50u = [abs(a - f) / a for a, f in pairs if a >= 50]
+    return {"holdout_days": holdout_days, "n_items": len(pairs),
+            "mape_pct": round(100 * weighted, 1),
+            "median_ape_pct": round(100 * float(np.median(apes)), 1) if apes else None,
+            "mean_ape_50u_pct": round(100 * float(np.mean(apes_50u)), 1) if apes_50u else None}

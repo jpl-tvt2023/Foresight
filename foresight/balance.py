@@ -102,7 +102,36 @@ def run_balancing(conn) -> dict:
         return {"error": "no recent sales"}
     cell_units = recent.groupby(["item_id", "location_id"])["units"].sum()
     state_units = recent.groupby(["item_id", "state"])["units"].sum()
-    hist_std = recent.groupby(["item_id", "location_id"])["units"].std().fillna(0.0).to_dict()
+    # Daily-demand std over the full zero-filled window — std over sale-days
+    # only ignores the zero days and understates variance for sparse cells.
+    daily = recent.groupby(["item_id", "location_id", "sale_date"])["units"].sum()
+    g = daily.groupby(level=["item_id", "location_id"])
+    n_win = POOL_SHARE_WINDOW
+    win_mean = g.sum() / n_win
+    win_var = (g.apply(lambda s: float((s ** 2).sum())) - n_win * win_mean ** 2) / (n_win - 1)
+    hist_std = np.sqrt(win_var.clip(lower=0.0)).to_dict()
+
+    # Largest-remainder allocation of each state pool to its cities:
+    # independent int(round(pool*share)) per city doesn't sum back to the
+    # pool, so floor everything and hand the remainder out by largest
+    # fractional part — allocated units always conserve exactly.
+    alloc: dict[tuple[int, int], int] = {}
+    by_state: dict[tuple[int, str], list[tuple[int, float]]] = {}
+    for (iid, lid), u in cell_units.items():
+        st = loc_info.get(lid, (None, None))[0]
+        if st is not None and u > 0:
+            by_state.setdefault((iid, st), []).append((lid, float(u)))
+    for (iid, st), members in by_state.items():
+        pool = state_stock.get((iid, st), 0)
+        total = sum(u for _, u in members)
+        if pool <= 0 or total <= 0:
+            continue
+        raw = [(lid, pool * u / total) for lid, u in members]
+        floors = {lid: int(x) for lid, x in raw}
+        remainder = pool - sum(floors.values())
+        for lid, x in sorted(raw, key=lambda t: t[1] - int(t[1]), reverse=True)[:remainder]:
+            floors[lid] += 1
+        alloc.update({(iid, lid): units for lid, units in floors.items()})
 
     recall_cost = _recall_unit_cost(conn)
     run_date = tt
@@ -121,7 +150,7 @@ def run_balancing(conn) -> dict:
             demanded_states.add((item_id, state))
         share = (float(cell_units.get((item_id, loc_id), 0.0)) / st_total
                  if st_total > 0 else 0.0)
-        on_hand = int(round(state_stock.get((item_id, state), 0) * share))
+        on_hand = alloc.get((item_id, loc_id), 0)
         transit = int(round(in_transit.get((item_id, state), 0) * share))
         available = on_hand + transit
 
@@ -134,7 +163,9 @@ def run_balancing(conn) -> dict:
         points = cell_fc["point"].to_numpy()
         dates = cell_fc["target_date"].tolist()
         method = cell_fc["method"].iloc[0]
-        source = "pooled" if method == "pooled_share" else "direct"
+        # recent_rate = new item, flat trailing rate — an estimate, not a
+        # measured model; carries the same caution flag as pooled.
+        source = "pooled" if method in ("pooled_share", "recent_rate") else "direct"
 
         fdd = float(points[:RECENT_DEMAND_WINDOW].mean())
         sd = hist_std.get((item_id, loc_id), 0.0)

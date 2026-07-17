@@ -73,7 +73,12 @@ section { display: none; } section.on { display: block; }
 .card .note { color: var(--ink-3); font-size: 12px; margin-bottom: 10px; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th { text-align: left; color: var(--ink-3); font-weight: 550; font-size: 12px;
-  border-bottom: 1px solid var(--grid); padding: 6px 10px 6px 0; }
+  border-bottom: 1px solid var(--grid); padding: 6px 10px 6px 0; white-space: nowrap; }
+/* long-text column absorbs the table's surplus width so numeric columns stay
+   snug instead of drifting apart on wide screens */
+#feedTbl th:nth-child(7), #feedTbl td:nth-child(7) { width: 52%; white-space: normal; }
+#recallTbl th:nth-child(2), #recallTbl td:nth-child(2) { width: 40%; }
+#poTbl th:first-child, #poTbl td:first-child { width: 34%; white-space: normal; }
 th[title] { cursor: help; text-decoration: underline dotted var(--axis); text-underline-offset: 3px; }
 td { border-bottom: 1px solid var(--grid); padding: 7px 10px 7px 0; vertical-align: top; }
 tbody tr:hover td, table tr:hover td { background: color-mix(in srgb, var(--accent) 4%, transparent); }
@@ -92,16 +97,22 @@ select:focus, input:focus, button:focus-visible { outline: 2px solid var(--accen
   background: var(--series-1); color: #fff; cursor: pointer; box-shadow: var(--shadow); }
 .btn:hover { filter: brightness(1.08); }
 .btn:disabled { opacity: .55; cursor: wait; }
-.gridwrap { overflow-x: auto; }
-.tblwrap { overflow-x: auto; }
+/* scrollable table regions: horizontal always, vertical past ~74vh with a
+   frozen header row (sticky needs the wrapper to be the scroll container) */
+.gridwrap, .tblwrap { overflow: auto; max-height: 74vh; }
+.tblwrap th { position: sticky; top: 0; background: var(--surface-1); z-index: 1; }
 table.fit { width: auto; min-width: min(100%, 480px); }
 table.fit th, table.fit td { padding-right: 28px; }
-.heat { border-collapse: separate; border-spacing: 2px; }
-.heat th { border: 0; padding: 3px 6px; font-size: 11px; white-space: nowrap; }
-.heat th.rowh { text-align: right; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heat { border-collapse: separate; border-spacing: 2px; width: 100%; }
+.heat th { border: 0; padding: 3px 6px; font-size: 11px; }
+.heat tr:first-child th { position: sticky; top: 0; background: var(--surface-1); z-index: 2;
+  white-space: normal; overflow-wrap: anywhere; max-width: 110px; vertical-align: bottom; line-height: 1.25; }
+.heat th.rowh { text-align: right; width: 1%; max-width: 230px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
 .heat th.rowh, .heat tr:first-child th:first-child { position: sticky; left: 0;
   background: var(--surface-1); z-index: 2; }
-.heat td { border: 0; border-radius: 4px; width: 44px; min-width: 44px; height: 26px; text-align: center;
+.heat tr:first-child th:first-child { z-index: 3; }   /* corner: sticky on both axes */
+.heat td { border: 0; border-radius: 4px; min-width: 44px; height: 26px; text-align: center;
   font-size: 11px; font-variant-numeric: tabular-nums; cursor: default; }
 .heat tr:hover td { background: revert-layer; }
 .heat td:hover { outline: 2px solid var(--ink-2); outline-offset: -1px; }
@@ -505,7 +516,7 @@ async function loadGrid() {
   for (const c of cols) {
     const label = c.city || c.state + " ⁎";
     const full = c.city ? `${c.city}, ${c.state}` : `${c.state} — state-wide pool (no city demand)`;
-    hr.appendChild(el("th", { title: full }, label.length > 12 ? label.slice(0, 11) + "…" : label));
+    hr.appendChild(el("th", { title: full }, label));
   }
   tbl.appendChild(hr);
   for (const [it, itName] of items) {

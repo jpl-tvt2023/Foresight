@@ -159,11 +159,12 @@ svg .dl { fill: var(--ink-2); font-weight: 600; }
 details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px; margin-top: 8px; }
 .scrolltbl { max-height: 460px; overflow-y: auto; }
 .scrolltbl th { position: sticky; top: 0; background: var(--surface-1); }
-/* side-by-side card pair (forecast table + storage chart) on wide screens */
-.duo { display: grid; gap: 16px; align-items: stretch; }
+/* side-by-side card pairs on wide screens */
+.duo { display: grid; gap: 0 16px; align-items: start; }
+.duo > * { min-width: 0; }   /* let grid items shrink below content min-width */
 @media (min-width: 1100px) {
   .duo { grid-template-columns: minmax(340px, 460px) 1fr; }
-  .duo .card { margin-bottom: 16px; }
+  .duo.half { grid-template-columns: minmax(380px, 1fr) 1fr; }
 }
 .banner { display: none; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 12px 14px;
   border-radius: 10px; border: 1px solid; font-size: 13px; }
@@ -280,12 +281,14 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
   </section>
 
   <section id="storage">
+    <div class="duo half">
     <div class="card">
       <h2 id="stTitle">Storage charges by SKU</h2>
       <div class="note">What each item cost you in Blinkit warehouse storage during the latest payout cycle (ex-GST). Longer bar = bigger deduction from your payout.</div>
       <div id="stBars"></div>
       <details class="tblview"><summary>Table view</summary><div class="tblwrap"><table id="stTbl" class="fit"></table></div></details>
     </div>
+    <div>
     <div class="card">
       <h2>Units by ageing slab (latest counted day)</h2>
       <div class="note">Blinkit charges storage per unit per day, and the rate climbs as stock ages. Units drifting into higher slabs are the recall lever's target.</div>
@@ -310,6 +313,8 @@ details.tblview summary { cursor: pointer; color: var(--ink-3); font-size: 12px;
           <dt>Net saving ₹</dt><dd>Projected storage minus Blinkit's recall handling charge. Positive = recalling pays for itself.</dd>
         </dl>
       </details>
+    </div>
+    </div>
     </div>
   </section>
 

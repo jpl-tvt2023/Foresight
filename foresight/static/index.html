@@ -118,8 +118,9 @@ table.fit th, table.fit td { padding-right: 28px; }
 .heat td { border: 0; border-radius: 4px; min-width: 44px; height: 26px; text-align: center;
   font-size: 11px; font-variant-numeric: tabular-nums; cursor: default; }
 .heat td.has { box-shadow: inset 0 0 0 1px var(--ring); }
-/* dead stock (∞): hatched so it can't be mistaken for a very-long-cover bin */
-.heat td.dead { color: #fff;
+/* dead stock (∞): hatched so it can't be mistaken for a very-long-cover bin.
+   The tr:hover background reset must not strip the hatch, hence both selectors. */
+.heat td.dead, .heat tr:hover td.dead { color: #fff;
   background: repeating-linear-gradient(45deg, var(--blue-3) 0 5px,
     color-mix(in srgb, var(--blue-3) 62%, var(--surface-1)) 5px 9px); }
 .legend .sw.dead-sw { color: #fff; font-size: 11px; text-align: center; line-height: 14px;

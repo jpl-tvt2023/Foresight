@@ -77,11 +77,15 @@ section { display: none; } section.on { display: block; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th { text-align: left; color: var(--ink-3); font-weight: 550; font-size: 12px;
   border-bottom: 1px solid var(--grid); padding: 6px 10px 6px 0; white-space: nowrap; }
-/* long-text column absorbs ALL the table's surplus width so numeric columns
+/* long-text column absorbs the table's surplus width so numeric columns
    stay snug instead of drifting apart; min-width keeps the text readable
-   when the table is squeezed */
-#feedTbl th:nth-child(7), #feedTbl td:nth-child(7) { width: 99%; min-width: 280px; white-space: normal; }
-#poTbl th:first-child, #poTbl td:first-child { width: 34%; white-space: normal; }
+   when squeezed. Wide tables cap at a reading width so ultrawide screens
+   don't open huge gaps inside rows — leftover space collects at the right. */
+#poTbl, #poChTbl { max-width: 1500px; }
+#feedTbl { width: auto; min-width: min(100%, 960px); }
+#feedTbl th:nth-child(7), #feedTbl td:nth-child(7) { min-width: 280px; max-width: 640px; white-space: normal; }
+#feedTbl td { padding-right: 22px; }
+#poTbl th:first-child, #poTbl td:first-child { width: 1%; white-space: nowrap; }
 th[title] { cursor: help; text-decoration: underline dotted var(--axis); text-underline-offset: 3px; }
 td { border-bottom: 1px solid var(--grid); padding: 7px 10px 7px 0; vertical-align: top; }
 tbody tr:hover td, table tr:hover td { background: color-mix(in srgb, var(--accent) 4%, transparent); }
